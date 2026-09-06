@@ -1,0 +1,68 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*.*.*"]
+  pull_request:
+  schedule:
+    - cron: "17 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - id: release
+        run: |
+          case "${{ github.event_name }}" in
+            push)
+              tag="${{ github.ref_type == 'tag' && github.ref_name || '' }}"
+              ;;
+            schedule|workflow_dispatch)
+              tag="$(git describe --tags --abbrev=0 --match 'v*.*.*' 2>/dev/null || true)"
+              if [ -n "${tag}" ]; then
+                git checkout --quiet "${tag}"
+              fi
+              ;;
+          esac
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+
+      - name: Lint the scripts
+        run: shellcheck --shell=sh src/sync.sh src/healthcheck.sh
+
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
+
+      - uses: docker/login-action@v4
+        if: github.event_name != 'pull_request'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/brouter-sync
+          tags: |
+            type=ref,event=branch,enable=${{ steps.release.outputs.tag == '' }}
+            type=ref,event=pr
+            type=semver,pattern={{version}},value=${{ steps.release.outputs.tag }},enable=${{ steps.release.outputs.tag != '' }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ steps.release.outputs.tag }},enable=${{ steps.release.outputs.tag != '' }}
+
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}

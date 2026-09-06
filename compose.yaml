@@ -1,0 +1,23 @@
+services:
+  brouter:
+    image: ghcr.io/abrensch/brouter:master
+    restart: unless-stopped
+    ports:
+      - "17777:17777"
+    volumes:
+      - segments:/segments4
+    depends_on:
+      brouter-sync:
+        condition: service_healthy
+
+  brouter-sync:
+    image: ghcr.io/quadrubo/brouter-sync:latest
+    restart: unless-stopped
+    environment:
+      SEGMENTS_BBOX: 5.8,47.2,15.1,55.1
+      SEGMENTS_REFRESH: 24h
+    volumes:
+      - segments:/segments4
+
+volumes:
+  segments:
